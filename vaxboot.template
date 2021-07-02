@@ -1,0 +1,25 @@
+SET cpu 64M AUTOBOOT CONHALT IDLE=VMS
+
+SET PTP DISABLED
+SET PTR DISABLED
+SET RP DISABLED
+SET RX DISABLED
+
+SET TS ENABLED
+SET TQ TK50
+SET TQ1 DISABLED
+SET TQ2 DISABLED
+SET TQ3 DISABLED
+
+IF "%rem_cons%" != ""       SET REMOTE TELNET=%remote_cons%
+
+IF "%lpt_file%" != ""       ATTACH LPT -n %lpt_file%
+IF "%dz_tnet_port%" != ""   ATTACH -a DZ %dz_tnet_port%
+
+IF "%eth0_mac%" != ""       SET XQ MAC=%eth0_mac%
+IF "%eth0_name%" != ""      ATTACH XQ %eth0_name%
+
+ATTACH NVR %sysname%.nvr
+SET %bdev% %dtype%
+ATTACH %bdev% %sysname%.%dtype%
+BOOT CPU

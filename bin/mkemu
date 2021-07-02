@@ -1,0 +1,231 @@
+#!/bin/bash
+#! mkemu name emulator [-d decnetaddr] [-i ipaddr] [-e ethdev] -t bootdevtype -u devunit
+#!
+#!
+#! mkemu seadog pdp11 -d 31.248 -i 10.131.1.101 -t rl02 -u rl0
+
+PROGVERSION="X1.0.0"
+
+usage() {
+    echo "Create a simh directory for the cghome.net simulators"
+    echo ""
+    echo "${progname} name emu -t dtype -u bdev [-d dnetaddr] [-i ipaddrr]"
+    echo "            [-e {xs|xq|xu}] [-m {70|93|3900|780|8650}]"
+    echo ""
+    echo "  name is the name of the system"
+    echo "  emu is the emulation type (pdp11, vax, is100)"
+    echo ""
+    echo "  -d|--decnet     DECnet address (area.node)"
+    echo "  -e|--ethernet   Emulated Ethernet name (xq, xu, xs)"
+    echo "  -m|--model      System model (70, 93, 780, 3900, 8650)"
+    echo "  -i|--ip         IPaddress"
+    echo "  -t|--type       Boot device type (simh version)"
+    echo "  -u|--boot       Boot device and unit (simh version)"
+    echo "  -V|--version    print version and exit"
+    echo "  -v|--debug      Debug; set -x"
+    echo ""
+    echo "-d and -i are used to set the remote console and dz11 telnet ports"
+    echo "The node number or last octet are added to 10000 and that value is"
+    echo "used for the telnet listening port.  If not specified, the remote"
+    echo "console port will be 10001, and the dz11 port will be 10002"
+    echo "The -d valuse is also used to set the MAC address of the ethernet"
+    echo "port"
+    echo ""
+    echo "Examples:"
+    echo "  ${progname} seadog pdp11 -i 10.131.1.33 -e eth0 -t rl02 -u rl0"
+    echo "  ${progname} seapig pdp11 -d 31.134 -i 10.131.1.99 -e tap3 -t ra92 -u rq0"
+
+    exit 0
+}
+
+exithandle() {
+    if [ "${tmpdir}" != "" ];    then rm -rf ${tmpdir}; fi
+    if [ "${tempfile}" != "" ];  then rm -rf ${tempfile}; fi
+}
+
+saveboot() {
+    tempfile=`mktemp logrot.XXXXXX`
+    tempfile1=`mktemp logstatus.XXXXXX`
+    echo "${kitbase}/${sname}/boot.ini {" > ${tempfile}
+    echo "    rotate 9" >> ${tempfile}
+    echo "    nocompress" >> ${tempfile}
+    echo "}" >> ${tempfile}
+    logrotate -f -s ${tempfile1} ${tempfile}
+    rm -rf ${tempfile} ${tempfile1}
+    tempfile=""
+    tempfile1=""
+}
+
+trap exithandle EXIT
+#!
+#! Initialization
+#!
+progname=`basename $0`
+progfull=`readlink -f $0`
+binbase=`dirname ${progfull}`
+kitbase=`dirname ${binbase}`
+
+#!
+#! Command line parse
+#!
+OPTIONS="d:e:i:m:t:u:?hVv"
+LONGOPT="decnet:,ethernet:,ip:,model:,type:,boot:,help,version,debug"
+PARSED=$(getopt --options=${OPTIONS} --longoptions=${LONGOPT} --name "$0" -- "$@")
+if [ $? -ne 0 ]; then
+    exit 2
+fi
+
+dnet=""         #! DECnet address
+ipaddr=""       #! IP address
+bdev=""         #! Boot device
+dtype=""        #! Boot device type
+ethname=""      #! Ethernet name (xq, xs, xu)
+model=""        #! CPU model (70, 93, 780, mv3900, 8650)
+dnet_node=""    #! Node portion of DECnet address
+ip_o4=""        #! 4th octet of IP address
+scssid=""       #! SCS system ID
+
+eval set -- "${PARSED}"
+while true; do
+    case "$1" in
+    --)
+        shift
+        break
+        ;;
+    -d|--decnet)
+        dnet=$2
+        shift 2
+        dnet_area=${dnet%%.*}
+        dnet_node=${dnet##*.}
+        scssid=`expr ${dnet_area} \* 1024 + ${dnet_node}`
+        b1=`expr ${scssid} / 256`
+        b2=`expr ${scssid} % 256`
+        printf -v emac "aa:00:04:00:%0x:%0x" ${b2} ${b1}
+        ;;
+    -e|--ethernet)
+        ethname=$2
+        shift 2
+        ;;
+    -i|--ip)
+        ipaddr=$2
+        shift 2
+        ip_o4=${ipaddr##*.*.*.}
+        ;;
+    -m|--model)
+        model=$2
+        shift 2
+        ;;
+    -t|--type)
+        dtype=$2
+        shift 2
+        ;;
+    -u|--boot)
+        bdev=$2
+        shift 2
+        ;;
+    -V|--version)
+        echo ${PROGVERSION}
+        exit 0
+        ;;
+    -v|--debug)
+        set -x
+        shift
+        ;;
+    -?|-h|--help|*)
+        usage
+        ;;
+    esac
+done
+
+if [ $# -ne 2 ]; then
+    usage
+fi
+if [ "${bdev}" == "" -o "${dtype}" == "" ]; then
+    usage
+fi
+
+sname=$1
+ename=$2
+
+case "${ename}" in
+pdp11)
+    if [ "${model}" == "70" -o "${model}" == "93" -o "${model}" == "" ]; then
+        mname="${ename}${model}"
+    fi
+    ;;
+vax)
+    if [ "${model}" == "mv3900" -o \
+         "${model}" == "8650" -o   \
+         "${model}" == "780" -o    \
+         "${model}" == "" ]; then
+         mname="${ename}${model}"
+    fi
+    ;;
+is100)
+    mname="is100"
+    ;;
+*)
+    echo "${progname}: Unrecognized emulator \"${ename}\""
+    exit 1
+    ;;
+esac
+
+if [ "${mname}" == "" ]; then
+    echo "${progname}: Unrecognized model \"${model}\""
+    exit 1
+fi
+
+bootini="${mname}boot.template"
+
+consport=`expr 10000 + ${dnet_node}`
+dzport=`expr 10000 + ${ip_o4}`
+
+#if [ "${ethname}" == "" ]; then
+#    if [ "${ename}" == "is100" ]; then
+#        emueth="xs"
+#    elif [ "${ename}" == "" ]; then
+#
+#    fi
+#fi
+
+#!
+#! Create the new directory
+#!
+mkdir -p ${kitbase}/${sname}
+#!
+#! Put the name of the appropriate version of simh in file emu
+#!
+echo ${ename} > ${kitbase}/${sname}/emu
+#ln -s ${binbase}/`uname -m`/${ename} ${kitbase}/${sname}/emu
+#!
+#! Copy the executatble to start the emulator
+#!
+cp ${binbase}/run.me ${kitbase}/${sname}/
+#!
+#! boot.ini - Create the system specific stuff
+#!
+if [ -e ${kitbase}/${sname}/boot.ini ]; then
+    saveboot
+fi
+cat >${kitbase}/${sname}/boot.ini <<EOF
+;
+;+ ${sname}: 
+;+   DECnet: ${dnet}   SCSSID: ${scssid}
+;+   TCP/IP: ${ipaddr}
+;
+SET ENV sysname=${sname}
+SET ENV bdev=${bdev}
+SET ENV dtype=${dtype}
+SET ENV lpt_file=/tmp/%sysname%.lst
+SET ENV eth0_name=tap:tap_${sname}
+SET ENV eth0_mac=${emac}
+SET ENV dz_tnet_port=${dzport}
+SET ENV rem_cons=${consport}
+;
+; End of environment variables
+;
+EOF
+#!
+#! boot.ini - Append the rest of the generic boot.ini
+#!
+cat ${binbase}/${bootini} >> ${kitbase}/${sname}/boot.ini

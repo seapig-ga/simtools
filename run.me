@@ -1,0 +1,22 @@
+#!/bin/bash
+progname=`basename $0`
+progfull=`readlink -f $0`
+runbase=`dirname ${progfull}`
+kitbase=`dirname ${runbase}`
+binbase="${kitbase}/bin"
+sysname=`basename ${runbase}`
+cd ${runbase}
+if [ ! -e emu ]; 
+then
+    exit 0
+fi
+myemu="${binbase}/`uname -m`/`cat ${runbase}/emu`"
+if [ ! -x ${myemu} ]; then
+    echo "${progfull}: No emulator ${myemu}"
+    exit 1
+fi
+ifconfig -a | grep -q tap_${sysname}
+if [ $? -ne 0 ]; then
+    sudo ${binbase}/addtap tap_${sysname} ${USER}
+fi
+screen -dmS ${sysname} ${myemu} boot.ini

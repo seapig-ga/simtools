@@ -1,0 +1,86 @@
+#!/bin/bash
+#! addtap - Create a bridge (if needed) and add a tap device to it
+#!
+#! Usage:   addtap tapname username
+#! or
+#!          BRIDGE="br1:" addtap tapname username
+#!
+#! Ideas cribbed from various sources.  I'll update where from when I find
+#! the references.
+#!
+VERSION="0.20"
+
+#! get_maineth - return the name of the IP connected eth port
+#!
+#! Strips out wireless and lo devices
+#! Returns an error if more than one has an IP address
+#!
+get_maineth() {
+    MAINETH=`(ifconfig | grep "\<UP" | grep -v "^Iface" | grep -v "^wlan0" | grep -v "^lo" |  awk -F ":" '{print $1}')`
+    count=`(echo ${MAINETH} | wc -w)`
+    if [ ${count} -ne 1 ]; then
+    #! multiple eth ports.  try to figure out the one to usee
+        for x in ${MAINETH}; do
+            ifconfig ${x} | grep -q inet
+            if [ $? -eq 0 ]; then
+                eths="${x} ${eths}"
+            fi
+        done
+        MAINETH=${eths}
+        count=`(echo ${MAINETH} | wc -w)`
+        if [ ${count} -ne 1 ]; then
+    	    echo "$0: Too many interfaces found."
+	    echo ${MAINETH}
+	    exit ${count}
+        fi
+    fi
+    HOSTIP=`/sbin/ifconfig ${MAINETH} | grep "inet " | gawk -- '{ print $2 }'`
+    HOSTNM=`/sbin/ifconfig ${MAINETH} | grep "inet " | gawk -- '{ print $4 }'`
+    HOSTBA=`/sbin/ifconfig ${MAINETH} | grep "inet " | gawk -- '{ print $6 }'`
+    HOSTGW=`/sbin/route -n | grep ^0.0.0.0 | grep ${MAINETH} | gawk -- '{ print $2 }'`
+}
+
+check_exe() {
+    which $0 >/dev/null
+    if [ $? -ne 0 ]; then
+        echo -n "ERROR - Missing executable $0"
+        if [ $1 != "" ]; then
+            echo -n "; install $1"
+        fi
+        echo ""
+    fi
+}
+
+[ $EUID -ne 0 ] && echo "${progname}: Must be run as root" >&2 && exit 1
+
+check_exe /sbin/brctl       bridge-utils
+check_exe /sbin/ifconfig    net-tools
+check_exe /usr/bin/tunctl   uml-utilities
+check_exe /sbin/route       net-tools
+check_exe grep              grep
+#! Use gawk.  mawk fails us for some forgotten reason...
+check_exe gawk              gawk
+
+BRIDGE=${BRIDGE:-"br0"}
+/sbin/ifconfig ${BRIDGE} >/dev/null 2>&1
+
+if [ $? != 0 ]; then
+    get_maineth
+    /sbin/brctl addbr ${BRIDGE}
+    /sbin/brctl addif ${BRIDGE} ${MAINETH}
+    /sbin/brctl setfd ${BRIDGE} 0
+    /sbin/ifconfig ${MAINETH} 0.0.0.0
+    /sbin/ifconfig ${BRIDGE} ${HOSTIP} netmask ${HOSTNM} broadcast ${HOSTBA} up
+    /sbin/route add -net 0.0.0.0/0 gw ${HOSTGW}
+fi
+
+tapname=$1
+tuser=$2
+if [ "${tuser}" == "" ]; then
+    tuser="root"
+fi
+
+/usr/bin/tunctl -t ${tapname} -u ${tuser}
+/sbin/ifconfig ${tapname} up
+/sbin/brctl addif br0 ${tapname}
+/sbin/ifconfig ${tapname} 0.0.0.0
