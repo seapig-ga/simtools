@@ -1,0 +1,60 @@
+set cpu conhalt
+SET ENV sysname=%sysname%
+SET ENV eth0_name=tap:tap_iscghome
+; dtype is always rz24
+SET ENV dtype=rz24
+;
+; Set the library path to match where you have your .ISO files
+;
+SET ENV lib_path=/sim2/lib
+
+;
+; Attach the NVRAM so that the boot flags can be saved
+;
+attach nvr %sysname%.nvr
+;
+attach xs %eth0_name%
+;
+; Setup SCSI devices. Disable any units that are not required or the
+; installation will take a long time to complete as it waits for
+; the units to be ready.
+;
+set rz0 disable
+;
+; System disk
+;
+set rz1 %dtype%
+;
+; CD-ROM - see note below
+;
+set rz2 rz24
+set rz3 disable
+set rz4 disable
+set rz5 disable
+; SCSI ID 6 is the initiator so is always disabled
+set rz7 disable
+
+; Disable all SCSI units on the second controller
+;
+set rzb0 disable
+set rzb1 disable
+set rzb2 disable
+set rzb3 disable
+set rzb4 disable
+set rzb5 disable
+; SCSI ID 6 is the initiator so is always disabled
+set rzb7 disable
+
+; Create a new disk image for the system disk
+;
+attach rz1 %sysname%.%dtype%
+
+; Attach the CD-ROM to the VAX/VMS V7.3 distribution
+ 
+#attach -r rz2 %lib_path%/vms/VAXVMS073OS.iso
+#attach -r rz3 %lib_path%/vms/pakgen.iso
+#attach -r rz4 %lib_path%/vaxhaven/VAXDOCDEC07-AG-RWPTM-BE.iso
+
+; Start the simulator
+;
+EXPECT ">>> " SEND "boot\r"; GO
